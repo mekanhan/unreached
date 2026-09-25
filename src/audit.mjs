@@ -13,6 +13,7 @@ import path from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { loadWorkflows } from './workflows.mjs';
 import { parseInvocation } from './reach.mjs';
+import { expandScripts } from './scripts.mjs';
 import { listTests } from './list.mjs';
 import { commentOnlyTags, liveTagIndex } from './comment-tags.mjs';
 
@@ -63,7 +64,12 @@ export async function audit(repo, { onStep = () => {} } = {}) {
     const workflows = loadWorkflows(repo);
     const invocations = [];
     for (const wf of workflows) {
-        for (const { cmd, cwd } of wf.commands) {
+        // A workflow rarely calls playwright directly — it calls a package script that
+        // does. Expand the script before looking, or the tool reports that nothing runs
+        // your tests on almost every real repository.
+        const expanded = wf.commands.flatMap(({ cmd, cwd }) =>
+            expandScripts(cmd, repo, cwd).map(c => ({ cmd: c, cwd })));
+        for (const { cmd, cwd } of expanded) {
             const inv = parseInvocation(cmd);
             if (!inv) continue;
             // An explicit path on the command line is written relative to the step's

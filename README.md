@@ -110,6 +110,23 @@ and its job reports success having run zero of its tests.
     tests/regression/extension-fee-panel.spec.ts   @hermetic appears only in a comment
 ```
 
+## It follows your package scripts
+
+Almost nobody calls Playwright directly from a workflow. They do this:
+
+```yaml
+- run: pnpm run test:e2e        # package.json: "playwright test --project=chromium"
+```
+
+`unreached` reads `package.json`, resolves the script, and follows it — through chains
+(`tsc && playwright test`), through scripts that call other scripts, and across
+`--workspace`. Without that it would look at the workflow, find no Playwright call, and
+tell you nothing runs your tests.
+
+That bug was real. It survived until the tool was pointed at repositories its author had
+never touched: **across 81 workflow files from six public projects, the number of direct
+`playwright test` invocations was zero.**
+
 ## What it will not tell you
 
 - **Only Playwright today.** Jest, vitest and `node:test` have the same disease and are

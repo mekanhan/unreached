@@ -10,9 +10,22 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
-/** Triggers that fire on their own. `workflow_dispatch` is a human; it does not count. */
+/**
+ * Triggers that fire on their own. `workflow_dispatch` is a human; it does not count.
+ *
+ * `workflow_run` was MISSING here until this parser met real repositories. A workflow
+ * chained off another workflow's completion is fully automatic, and leaving it out made
+ * every test in such a job read as unreachable — a false positive, which is the worst
+ * output a diagnostic can produce.
+ *
+ * Deliberately NOT automatic: `issue_comment`, `issues`, `pull_request_review`,
+ * `pull_request_review_comment`, `delete`. All were seen in the wild, and all fire
+ * because a person did something, not because code changed. For the question this tool
+ * asks — does CI run this test as a gate on a change — that is a human pressing a button
+ * by another name.
+ */
 const AUTOMATIC = new Set([
-    'push', 'pull_request', 'pull_request_target', 'merge_group',
+    'push', 'pull_request', 'pull_request_target', 'merge_group', 'workflow_run',
     'schedule', 'release', 'check_suite', 'repository_dispatch', 'workflow_call',
 ]);
 

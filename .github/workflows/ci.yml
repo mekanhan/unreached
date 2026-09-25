@@ -1,0 +1,94 @@
+# The tool that asks whether CI runs your tests, running its own.
+#
+# GitHub-hosted runners on purpose: `unreached` has no dependencies and has to work on a
+# stock box. Pinning it to a self-hosted fleet would hide exactly the assumptions — a
+# preinstalled binary, a warm cache, a particular Node — that break for the first stranger
+# who clones it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 is the floor the README and package.json both claim. 22 is what it is
+        # developed against. A break in either is worth knowing before a user finds it.
+        node: ['18', '20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Unit + contract + wild shapes
+        run: node --test test/*.test.mjs
+
+  dogfood:
+    name: run it on itself
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      # This repository has no playwright config, so the honest answer is to say so and
+      # stop — exit 2, "could not look", NOT exit 1 "found problems". That distinction is
+      # the one C-007 exists for, and it is worth a gate of its own: a tool that reports a
+      # missing config as a finding would fail every repo that does not use Playwright.
+      - name: A repo with no playwright config exits 2, not 1
+        run: |
+          set +e
+          node bin/unreached.mjs --repo . >/dev/null 2>&1
+          code=$?
+          set -e
+          [ "$code" = "2" ] || { echo "::error::expected exit 2 (could not look), got $code"; exit 1; }
+          echo "exit 2 — could not look, correctly distinguished from found-problems"
+
+      - name: The help text names only flags that exist
+        run: |
+          set -e
+          node bin/unreached.mjs --help | tee /tmp/help.txt
+          grep -q -- '--strict' /tmp/help.txt
+          grep -q -- '--ci' /tmp/help.txt
+
+      # A mistyped flag must fail loudly. `--stict` silently ignored would mean someone
+      # believes they gated their pipeline when they did not.
+      - name: A mistyped flag is rejected
+        run: |
+          set +e
+          node bin/unreached.mjs --stict >/dev/null 2>&1
+          code=$?
+          set -e
+          [ "$code" = "2" ] || { echo "::error::a typo must exit 2, got $code"; exit 1; }
+
+  package:
+    name: what npm would publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      # The sibling tool shipped its test suite and CI config to every consumer because
+      # `files` was missing. Assert the tarball holds only what it should.
+      - name: No test, fixture or CI files in the tarball
+        run: |
+          set -e
+          npm pack --dry-run 2>&1 | tee /tmp/pack.txt
+          if grep -qE '(^|[[:space:]])(test/|\.github/)' /tmp/pack.txt; then
+            echo "::error::the tarball contains test or CI files — check the files field"
+            exit 1
+          fi
+          grep -q 'bin/unreached.mjs' /tmp/pack.txt || { echo "::error::the binary is missing from the tarball"; exit 1; }
