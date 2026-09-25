@@ -16,6 +16,7 @@ export const FLAGS = Object.freeze({
     json: { takesValue: false, help: 'machine-readable, every unreachable test individually' },
     strict: { takesValue: false, help: 'exit 1 if anything is unreachable' },
     quiet: { takesValue: false, help: 'no progress line' },
+    ci: { takesValue: false, help: 'exit 1 when a BLOCKER is found — put it first in the pipeline' },
     help: { takesValue: false, help: 'this text' },
 });
 

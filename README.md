@@ -63,19 +63,33 @@ when somebody remembers is not a gate.
 ### As a gate
 
 ```bash
-unreached --strict     # exit 1 if anything is unreachable
+unreached --ci         # exit 1 only on a BLOCKER — put it first in the pipeline
+unreached --strict     # blunter: exit 1 if anything at all is unreachable
 ```
 
-Most repos should not turn this on the day they install it. Run it, read the list,
-decide what is deliberate, then gate.
+`--ci` fires only when a project is named by **no workflow at all**. Tests that a manual
+workflow runs, or that a tag filter excludes, are warnings — a repo can legitimately hold
+those, and a gate that fires on them gets switched off inside a week.
+
+`--strict` keeps the blunt meaning if you want it. Most repos should not turn either on the
+day they install it: run it, read the list, decide what is deliberate, then gate.
+
+Exit codes follow the findings contract: `0` ran cleanly, `1` found blockers, **`2` the tool
+itself failed**. A pipeline that treats every non-zero as a failed check will read a broken
+tool as a broken build.
 
 ### Other flags
 
 ```bash
 unreached --repo ../some-other-repo    # audit a repo you are not standing in
-unreached --json                       # every unreachable test, individually
+unreached --json                       # findings-contract v1 envelope on stdout
 unreached --quiet                      # no progress line, for logs and pipes
 ```
+
+`--json` emits exactly one object on stdout and nothing else; progress goes to stderr, so it
+pipes cleanly. The 177 unreachable tests in the example above come back as **three findings**
+grouped by cause, each with a stable `fingerprint` — so a fleet of repos collapses into
+"3 causes affecting N repos" rather than a wall.
 
 ## The near miss
 

@@ -5,6 +5,7 @@
 
 import path from 'node:path';
 import { audit } from '../src/audit.mjs';
+import { toContract } from '../src/contract.mjs';
 import { FLAGS, FLAG_NAMES, BIN } from '../src/cli-spec.mjs';
 
 const argv = process.argv.slice(2);
@@ -41,15 +42,12 @@ if (!quiet) process.stderr.write(' '.repeat(60) + '\r');
 if (r.error) { console.error(`unreached: ${r.error}`); process.exit(2); }
 
 if (has('json')) {
-    console.log(JSON.stringify({
-        total: r.total, reached: r.reached, unreached: r.dead.length,
-        dead: r.dead,
-        invocations: r.invocations.map(i => ({
-            workflow: i.workflow, cmd: i.cmd, automatic: i.automatic,
-            triggers: i.triggers, count: i.count ?? null,
-        })),
-    }, null, 2));
-    process.exit(has('strict') && r.dead.length ? 1 : 0);
+    // C-001: exactly one object on stdout, nothing else. Progress went to stderr.
+    const env = toContract(r, { repo });
+    console.log(JSON.stringify(env, null, 2));
+    // C-007: 1 means blockers were found, and is reachable only under --ci. Exit 2 is
+    // reserved for the tool failing, and is raised above where that happens.
+    process.exit(has('ci') && env.summary.blocker ? 1 : 0);
 }
 
 const pct = n => `${((n / r.total) * 100).toFixed(1)}%`;
@@ -103,4 +101,11 @@ if (approx.length) {
     console.log();
 }
 
+// C-007. `--ci` gates on BLOCKERS, not on any finding: a repo can legitimately hold
+// tests that only a manual workflow runs, and a gate that fires on those gets switched
+// off in a week. `--strict` keeps the older, blunter meaning for anyone already using it.
+if (has('ci')) {
+    const env = toContract(r, { repo });
+    if (env.summary.blocker) process.exit(1);
+}
 if (has('strict') && r.dead.length) process.exit(1);
