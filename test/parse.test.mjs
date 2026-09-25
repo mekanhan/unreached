@@ -39,12 +39,18 @@ test('UNR-004: a paths: filter is captured, because it narrows when the job runs
 
 test('UNR-005: an `on:` block we cannot read reports UNKNOWN, never automatic', () => {
     // No `on:` at all — a composite action, a fragment, something unexpected.
-    const { parsed, triggers } = parseTriggers('runs:\n  using: composite\n');
-    assert.equal(parsed, false);
-    assert.deepEqual(triggers, []);
-    // CONTROL ARM: treating "no triggers found" as "manual" would be a silent lie, so
-    // audit() keys off `parsed`. Prove the flag that carries that distinction exists.
-    assert.notEqual(parsed, true);
+    const a = parseTriggers('runs:\n  using: composite\n');
+    assert.equal(a.found, false);
+    assert.equal(a.confident, false);
+    assert.deepEqual(a.triggers, []);
+
+    // And the case that matters more: an `on:` block that IS there and cannot be read.
+    // "I found nothing" must never become "there is nothing", because downstream that
+    // becomes "manual only", which becomes "these tests are dead".
+    const b = parseTriggers('on:\n  {{ templated }}\n\njobs:\n');
+    assert.equal(b.found, true, 'the block is there');
+    assert.equal(b.confident, false, 'and it could not be read');
+    assert.ok(b.why, 'the reason must be stated, not implied');
 });
 
 // ──────────────────────── run: and working-directory ────────────────────────

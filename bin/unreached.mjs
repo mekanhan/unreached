@@ -52,6 +52,16 @@ if (has('json')) {
 
 const pct = n => `${((n / r.total) * 100).toFixed(1)}%`;
 
+// Colour only when a human is looking. A pipe, a log file or a CI transcript gets plain
+// text, because escape codes in a build log are noise someone has to grep around.
+const tty = process.stdout.isTTY && !process.env.NO_COLOR;
+const wrap = (code, t) => (tty ? `\x1b[${code}m${t}\x1b[0m` : t);
+const c = {
+    bold: t => wrap(1, t),
+    grey: t => wrap(90, t),
+    yellow: t => wrap(33, t),
+};
+
 console.log(`\n  unreached — ${path.basename(repo)}\n`);
 console.log(`  config        ${path.relative(repo, r.configPath)}`);
 console.log(`  total tests   ${r.total}   (collected by playwright, not counted from source)\n`);
@@ -76,15 +86,38 @@ for (const [wf, list] of seen) {
     console.log();
 }
 
-console.log(`  reached by an automatic run   ${String(r.reached).padStart(4)}   ${pct(r.reached)}`);
-console.log(`  NEVER RUN BY CI               ${String(r.dead.length).padStart(4)}   ${pct(r.dead.length)}\n`);
+// THREE numbers. `unreachable` is a positive claim and has to be earned; anything this
+// tool could not establish is its own bucket, reported FIRST, because a reader who
+// skims must not mistake "I could not tell" for "this is dead".
+console.log(`  proven reached                ${String(r.reached).padStart(4)}   ${pct(r.reached)}`);
+console.log(`  UNPROVEN                      ${String(r.unproven.length).padStart(4)}   ${pct(r.unproven.length)}`);
+console.log(`  proven unreachable            ${String(r.unreachable.length).padStart(4)}   ${pct(r.unreachable.length)}\n`);
 
-if (r.dead.length) {
+if (r.blocksUnreachable.length) {
+    console.log(`  ${c.yellow('NOTHING can be called unreachable while these are unread:')}\n`);
+    for (const b of r.blocksUnreachable) console.log(`    ${b.what}\n      ${c.grey(b.why)}`);
+    console.log();
+}
+
+if (r.unproven.length) {
+    const reasons = new Map();
+    for (const t of r.unproven) reasons.set(t.why, (reasons.get(t.why) ?? 0) + 1);
+    console.log(`  ${c.bold('UNPROVEN')} ${c.grey('— neither covered nor dead. Look before acting on these.')}\n`);
+    for (const [why, n] of [...reasons].sort((a, b) => b[1] - a[1]))
+        console.log(`    ${String(n).padStart(4)}  ${why}`);
+    for (const cnd of r.conditional) console.log(`          ${c.grey(cnd.what + ' — ' + cnd.why)}`);
+    console.log();
+}
+
+if (r.unreachable.length) {
     const byFile = new Map();
-    for (const t of r.dead) byFile.set(t.file, (byFile.get(t.file) ?? 0) + 1);
+    for (const t of r.unreachable) byFile.set(t.file, (byFile.get(t.file) ?? 0) + 1);
+    console.log(`  ${c.bold('PROVEN UNREACHABLE')} ${c.grey('— every workflow was read, and no automatic run selects these')}\n`);
     for (const [f, n] of [...byFile].sort((a, b) => b[1] - a[1]))
         console.log(`    ${String(n).padStart(4)}  ${f}`);
     console.log();
+    console.log(c.grey('  This is a triage list, not a delete list. A test that no job runs may still be'));
+    console.log(c.grey('  the one someone runs by hand before a release.\n'));
 }
 
 if (r.nearMisses?.length) {

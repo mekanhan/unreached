@@ -13,16 +13,34 @@ Nothing tells you which is which. Both kinds are green.
 ## What it does
 
 Asks Playwright to collect every test. Then asks Playwright again, once per automatic
-workflow invocation, with that invocation's exact flags. Everything in the first set
-and none of the second has never run in CI and never will.
+workflow invocation, with that invocation's exact flags.
+
+**Three answers, not two.**
 
 ```
-  reached by an automatic run     72   28.9%
-  NEVER RUN BY CI                177   71.1%
+  proven reached                  69   27.7%
+  UNPROVEN                         3    1.2%
+  proven unreachable             177   71.1%
 ```
 
-Both numbers come from the same binary that runs in CI, so there is no model of
-Playwright here that can drift from Playwright.
+`unreachable` is a **positive claim** and has to be earned: every workflow read with
+confidence, no unmodelled flags, and nothing selecting the test. Anything short of that
+is `UNPROVEN` and says why.
+
+That asymmetry is the whole design. Someone reading "these never run" may delete them:
+
+| | |
+|---|---|
+| wrongly saying **unreachable** | live coverage deleted, silently, forever |
+| wrongly saying **unproven** | somebody looks for thirty seconds |
+
+So an unknown never produces the dangerous answer. Which claim an unknown blocks depends
+on which way it cuts — a workflow we could not *read* might run tests we never saw, so it
+blocks `unreachable`; a job behind `if:` or `paths:` might *not* run, so it blocks
+`reached`. Treating those the same would either hide real gaps or invent them.
+
+**This is a triage list, not a delete list.** A test no job runs may still be the one
+somebody runs by hand before a release.
 
 ## Install
 
@@ -137,6 +155,10 @@ never touched: **across 81 workflow files from six public projects, the number o
 - **An unrecognised flag makes the count a ceiling.** If an invocation passes something
   this tool does not model, it says so rather than quietly treating its own number as
   exact.
+- **It runs your test runner.** `playwright --list` loads your config and your project's
+  own tooling. The zero-dependency promise is about what this tool *adds* to your
+  pipeline, not a claim that it executes nothing — be aware of that before pointing it at
+  a repository you do not trust.
 - **Reachable is not the same as useful.** A test CI runs can still be a test that
   cannot fail. That is a different instrument —
   [control-arm](https://github.com/mekanhan/control-arm) asks whether a test would have
@@ -147,6 +169,15 @@ never touched: **across 81 workflow files from six public projects, the number o
 Both sides of the subtraction are produced by `playwright --list`, and the parse
 cross-checks itself against Playwright's own printed `Total:` — if the two disagree the
 tool refuses to answer rather than report the difference as a finding.
+
+**The workflow parser is checked against a real YAML parser.** It was once validated by
+running it over 81 real workflow files and observing that none failed to parse. That
+measured *did-not-crash*, not *did-it-agree* — and one of those 81 was read wrongly while
+reporting success (`on:` followed by a block sequence yielded "no triggers", which became
+"manual only", which becomes "these tests are dead"). File coverage is not semantic
+coverage. `js-yaml` is now a **dev** dependency used as an oracle: `test/oracle.test.mjs`
+asserts agreement on every shape, and keeps a control arm of the parser that got it wrong.
+It is never imported by `src/`, and never appears in the published tarball.
 
 The suite keeps a **control arm** for every bug found so far: the broken implementation,
 executed on the same input, asserted to still get the answer wrong. Three of them are

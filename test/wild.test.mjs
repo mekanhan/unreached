@@ -34,8 +34,8 @@ test('WILD-001: every trigger name seen in the wild parses', () => {
         'pull_request_review', 'pull_request_review_comment', 'pull_request_target',
         'push', 'release', 'schedule', 'workflow_call', 'workflow_dispatch', 'workflow_run'];
     for (const t of seen) {
-        const { triggers, parsed } = parseTriggers(`name: x\non:\n  ${t}:\n\njobs:\n  a:\n`);
-        assert.equal(parsed, true, `could not parse \`on: ${t}\``);
+        const { triggers, confident } = parseTriggers(`name: x\non:\n  ${t}:\n\njobs:\n  a:\n`);
+        assert.equal(confident, true, `not confident about \`on: ${t}\``);
         assert.deepEqual(triggers, [t]);
     }
 });

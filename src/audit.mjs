@@ -15,6 +15,7 @@ import { loadWorkflows } from './workflows.mjs';
 import { parseInvocation } from './reach.mjs';
 import { expandScripts } from './scripts.mjs';
 import { listTests } from './list.mjs';
+import { classifyUncertainty, verdictFor, REACHED, UNREACHABLE, UNPROVEN } from './verdict.mjs';
 import { commentOnlyTags, liveTagIndex } from './comment-tags.mjs';
 
 const CONFIGS = ['playwright.config.ts', 'playwright.config.js', 'playwright.config.mjs'];
@@ -67,9 +68,9 @@ export async function audit(repo, { onStep = () => {} } = {}) {
         // A workflow rarely calls playwright directly — it calls a package script that
         // does. Expand the script before looking, or the tool reports that nothing runs
         // your tests on almost every real repository.
-        const expanded = wf.commands.flatMap(({ cmd, cwd }) =>
-            expandScripts(cmd, repo, cwd).map(c => ({ cmd: c, cwd })));
-        for (const { cmd, cwd } of expanded) {
+        const expanded = wf.commands.flatMap(({ cmd, cwd, if: stepIf }) =>
+            expandScripts(cmd, repo, cwd).map(c => ({ cmd: c, cwd, if: stepIf })));
+        for (const { cmd, cwd, if: cmdIf } of expanded) {
             const inv = parseInvocation(cmd);
             if (!inv) continue;
             // An explicit path on the command line is written relative to the step's
@@ -80,12 +81,22 @@ export async function audit(repo, { onStep = () => {} } = {}) {
             invocations.push({
                 ...inv, paths: rebased, workflow: wf.file,
                 automatic: wf.automatic, triggers: wf.automaticTriggers,
+                confident: wf.confident, why: wf.why,
+                // A step-level `if:` and a trigger-level `paths:` both mean "might not
+                // run". They are carried, never evaluated — evaluating them needs the
+                // event context, which does not exist outside an actual run.
+                if: cmdIf ?? null,
                 pathFilters: wf.filters?.pull_request?.paths ?? wf.filters?.push?.paths ?? null,
             });
         }
     }
 
-    const reached = new Set();
+    // Two sets, not one. A test selected only by a CONDITIONAL job is not covered and is
+    // not dead — collapsing them into one "reached" set is what lets a conditional job
+    // masquerade as coverage.
+    const byUnconditional = new Set();
+    const byConditional = new Set();
+
     for (const inv of invocations) {
         if (inv.automatic !== true) continue;
         onStep(`resolving ${inv.workflow}`);
@@ -93,10 +104,30 @@ export async function audit(repo, { onStep = () => {} } = {}) {
         inv.ok = r.ok;
         inv.error = r.error;
         inv.count = r.tests.size;
-        for (const k of r.tests.keys()) reached.add(k);
+        const target = (inv.if || inv.pathFilters?.length) ? byConditional : byUnconditional;
+        for (const k of r.tests.keys()) target.add(k);
     }
 
-    const dead = [...all.tests].filter(([k]) => !reached.has(k)).map(([, v]) => v);
+    const { blocksUnreachable, conditional } = classifyUncertainty(invocations, workflows);
+    const anyBlocker = blocksUnreachable.length > 0;
+
+    const verdicts = [...all.tests].map(([k, t]) => ({
+        ...t,
+        ...verdictFor({
+            selectedByUnconditional: byUnconditional.has(k),
+            selectedByConditional: byConditional.has(k),
+            anyBlocker,
+        }),
+    }));
+
+    const reachedTests = verdicts.filter(v => v.verdict === REACHED);
+    const unreachable = verdicts.filter(v => v.verdict === UNREACHABLE);
+    const unproven = verdicts.filter(v => v.verdict === UNPROVEN);
+
+    // Kept for the report and the older callers. `dead` now means PROVEN unreachable —
+    // never "we did not find a run for it".
+    const dead = unreachable;
+    const reached = byUnconditional;
 
     // The near miss: a tag CI greps for, written in a comment instead of a title.
     const ciTags = [...new Set(invocations
@@ -120,7 +151,9 @@ export async function audit(repo, { onStep = () => {} } = {}) {
     return {
         repo, configPath, projectRoot,
         total: all.tests.size,
-        reached: reached.size,
+        reached: reachedTests.length,
+        verdicts, unreachable, unproven,
+        blocksUnreachable, conditional,
         dead,
         nearMisses,
         ciTags,

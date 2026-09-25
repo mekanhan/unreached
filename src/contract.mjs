@@ -16,6 +16,7 @@ const FILTERED_OUT = 'UNR-002';
 const MANUAL_ONLY = 'UNR-003';
 const COMMENT_TAG = 'UNR-010';
 const UNMODELLED = 'UNR-020';
+const UNPROVEN_ID = 'UNR-021';
 
 /** C-004: severity is about whether a build can succeed, never about tidiness. */
 export const BLOCKER = 'blocker', WARN = 'warn', INFO = 'info';
@@ -44,8 +45,20 @@ export function toContract(r, { repo, ref = null } = {}) {
     const namedByAutomatic = new Set(automatic.flatMap(i => i.projects));
     const anyAutomaticTakesAllProjects = automatic.some(i => i.projects.length === 0);
 
+    // C-005 fits the new model exactly: UNPROVEN is "could not be established", which is
+    // what `skipped` means. It must never appear among the findings, because a finding is
+    // a claim and "I could not tell" is the absence of one.
+    for (const b of r.blocksUnreachable ?? [])
+        skipped.push({ id: UNMODELLED, reason: `${b.what} — ${b.why}`, requires: 'a workflow this tool can read' });
+
+    const unprovenReasons = new Map();
+    for (const t of r.unproven ?? []) unprovenReasons.set(t.why, (unprovenReasons.get(t.why) ?? 0) + 1);
+    for (const [why, n] of unprovenReasons)
+        skipped.push({ id: UNPROVEN_ID, reason: `${n} test${n === 1 ? '' : 's'}: ${why}`, requires: 'a job with no condition on it' });
+
+    // Only PROVEN unreachable tests become findings.
     const byProject = new Map();
-    for (const t of r.dead) byProject.set(t.project, [...(byProject.get(t.project) ?? []), t]);
+    for (const t of (r.unreachable ?? r.dead)) byProject.set(t.project, [...(byProject.get(t.project) ?? []), t]);
 
     for (const [project, tests] of byProject) {
         const named = anyAutomaticTakesAllProjects || namedByAutomatic.has(project);
@@ -155,7 +168,12 @@ export function toContract(r, { repo, ref = null } = {}) {
             blocker: count(BLOCKER), warn: count(WARN), info: count(INFO),
             skipped: skipped.length,
             // Tool-specific extras are allowed alongside the required counts.
-            tests_total: r.total, tests_reached: r.reached, tests_unreached: r.dead.length,
+            // Three numbers, and they add up. A consumer that sees only reached+unreachable
+            // would silently lose the middle bucket, which is the one that needs a human.
+            tests_total: r.total,
+            tests_proven_reached: r.reached,
+            tests_unproven: (r.unproven ?? []).length,
+            tests_proven_unreachable: (r.unreachable ?? r.dead).length,
         },
     };
 }

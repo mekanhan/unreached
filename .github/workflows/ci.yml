@@ -32,8 +32,21 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      - name: Unit + contract + wild shapes
+      # The oracle test needs js-yaml, which is a DEV dependency and never ships. Without
+      # it that test skips itself rather than failing — but in CI it must actually run,
+      # so the install is not optional here.
+      - run: npm ci
+      - name: Unit + contract + wild shapes + YAML oracle
         run: node --test test/*.test.mjs
+
+      - name: The oracle must have RUN, not skipped
+        run: |
+          set -e
+          node --test test/oracle.test.mjs 2>&1 | tee /tmp/oracle.txt
+          if grep -q 'js-yaml not installed' /tmp/oracle.txt; then
+            echo "::error::the YAML oracle skipped itself — the parser is unvalidated"
+            exit 1
+          fi
 
   dogfood:
     name: run it on itself
