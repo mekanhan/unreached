@@ -1,16 +1,20 @@
 {
   "name": "unreached",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Which of your tests does CI never run?",
   "type": "module",
-  "bin": { "unreached": "./bin/unreached.mjs" },
+  "bin": {
+    "unreached": "./bin/unreached.mjs"
+  },
   "files": [
     "bin",
     "src",
     "README.md",
     "LICENSE"
   ],
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "keywords": [
     "testing",
     "test-quality",
@@ -25,7 +29,9 @@
     "url": "git+https://github.com/mekanhan/unreached.git"
   },
   "homepage": "https://github.com/mekanhan/unreached#readme",
-  "bugs": { "url": "https://github.com/mekanhan/unreached/issues" },
+  "bugs": {
+    "url": "https://github.com/mekanhan/unreached/issues"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
