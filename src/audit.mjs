@@ -28,19 +28,42 @@ function readTestDir(configPath) {
     } catch { return '.'; }
 }
 
+/** Directories that never hold a project's own config, and are expensive to walk. */
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'coverage',
+    '.next', '.turbo', '.cache', 'vendor', 'target', '.venv', '__pycache__']);
+
+/**
+ * Find EVERY playwright config in the tree.
+ *
+ * This used to guess at directory names — `apps`, `packages`, `e2e`, `tests` — and
+ * returned null for anything else. The first repository it met outside its author's own
+ * keeps its suite in `platform-e2e/`, so the tool simply refused to run. A hardcoded list
+ * of other people's folder names is not a search.
+ *
+ * Returning ALL of them matters as much as finding one: in a monorepo, a config this tool
+ * did not analyse can select tests it is about to call unreachable. Those become blockers
+ * rather than being silently ignored.
+ */
+export function findConfigs(repo, maxDepth = 4) {
+    const found = [];
+    const walk = (dir, depth) => {
+        if (depth > maxDepth) return;
+        let entries = [];
+        try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            if (e.isFile() && CONFIGS.includes(e.name)) found.push(path.join(dir, e.name));
+            else if (e.isDirectory() && !SKIP_DIRS.has(e.name) && !e.name.startsWith('.'))
+                walk(path.join(dir, e.name), depth + 1);
+        }
+    };
+    walk(repo, 0);
+    // Shallowest first, so the root-level config of a normal repo is the one chosen.
+    return found.sort((a, b) => a.split(path.sep).length - b.split(path.sep).length);
+}
+
+/** Backwards-compatible single answer. */
 export function findConfig(repo) {
-    const dirs = [repo];
-    for (const d of ['apps', 'packages', 'e2e', 'tests']) {
-        const p = path.join(repo, d);
-        if (!existsSync(p)) continue;
-        dirs.push(p, ...readdirSync(p, { withFileTypes: true })
-            .filter(e => e.isDirectory()).map(e => path.join(p, e.name)));
-    }
-    for (const dir of dirs) for (const n of CONFIGS) {
-        const p = path.join(dir, n);
-        if (existsSync(p)) return p;
-    }
-    return null;
+    return findConfigs(repo)[0] ?? null;
 }
 
 /** Rebuild the flag list CI passes, dropping only what cannot affect WHICH tests run. */
@@ -54,9 +77,12 @@ export function filterArgs(inv) {
 }
 
 export async function audit(repo, { onStep = () => {} } = {}) {
-    const configPath = findConfig(repo);
-    if (!configPath) return { error: `no playwright.config.* found under ${repo}` };
+    const configs = findConfigs(repo);
+    if (!configs.length) return { error: `no playwright.config.* found under ${repo}` };
+    const configPath = configs[0];
     const projectRoot = path.dirname(configPath);
+    // A config we did not analyse may select tests we are about to call unreachable.
+    const otherConfigs = configs.slice(1);
 
     onStep('collecting every test');
     const all = await listTests(projectRoot, []);
@@ -109,6 +135,11 @@ export async function audit(repo, { onStep = () => {} } = {}) {
     }
 
     const { blocksUnreachable, conditional } = classifyUncertainty(invocations, workflows);
+    for (const c of otherConfigs)
+        blocksUnreachable.push({
+            what: path.relative(repo, c),
+            why: 'a second playwright config this run did not analyse — it may select tests listed below',
+        });
     const anyBlocker = blocksUnreachable.length > 0;
 
     const verdicts = [...all.tests].map(([k, t]) => ({

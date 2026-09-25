@@ -16,7 +16,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { loadWorkflows, parseTriggers } from '../src/workflows.mjs';
+import { findConfigs } from '../src/audit.mjs';
 
 function repo(files, pkg = null) {
     const dir = mkdtempSync(path.join(tmpdir(), 'unreached-wild-'));
@@ -99,4 +101,35 @@ test('WILD-007: a workflow with several triggers is automatic if ANY of them is'
     const [w] = loadWorkflows(dir);
     assert.equal(w.automatic, true, 'a nightly schedule runs without anyone pressing anything');
     assert.deepEqual(w.automaticTriggers, ['schedule']);
+});
+
+test('WILD-008: the config is FOUND, not guessed at by folder name', () => {
+    // The first repository this met outside its author's own keeps its suite in
+    // `platform-e2e/`. The old finder guessed at `apps`, `packages`, `e2e`, `tests` and
+    // returned null for anything else — so the tool refused to run on a perfectly normal
+    // repo. A hardcoded list of other people's folder names is not a search.
+    const dir = mkdtempSync(path.join(tmpdir(), 'unreached-cfg-'));
+    for (const rel of ['platform-e2e', 'weird-name/nested', 'apps/e2e']) {
+        mkdirSync(path.join(dir, rel), { recursive: true });
+        writeFileSync(path.join(dir, rel, 'playwright.config.ts'), 'export default {};');
+    }
+    mkdirSync(path.join(dir, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(path.join(dir, 'node_modules', 'pkg', 'playwright.config.ts'), 'export default {};');
+
+    const found = findConfigs(dir).map(f => path.relative(dir, f));
+    assert.equal(found.length, 3, `expected 3 configs, got: ${found.join(', ')}`);
+    assert.ok(found.some(f => f.startsWith('platform-e2e')), 'the real-world layout must be found');
+    assert.ok(found.some(f => f.startsWith('weird-name')), 'an arbitrary folder name must be found');
+    assert.equal(found.some(f => f.includes('node_modules')), false, 'node_modules must not be walked');
+
+    // CONTROL ARM: the old finder, on the same tree.
+    const OLD = r => {
+        for (const d of ['apps', 'packages', 'e2e', 'tests']) {
+            const p2 = path.join(r, d, 'playwright.config.ts');
+            if (existsSync(p2)) return p2;
+        }
+        return null;
+    };
+    assert.equal(OLD(path.join(dir, 'platform-e2e')), null,
+        'the old finder must still miss a repo laid out this way');
 });
